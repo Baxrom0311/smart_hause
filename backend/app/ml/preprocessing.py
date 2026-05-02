@@ -1,10 +1,10 @@
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import RobustScaler
 
 
-def normalize_data(data: np.ndarray) -> tuple[np.ndarray, MinMaxScaler]:
+def normalize_data(data: np.ndarray) -> tuple[np.ndarray, RobustScaler]:
     array = np.asarray(data, dtype=float).reshape(-1, 1)
-    scaler = MinMaxScaler()
+    scaler = RobustScaler(quantile_range=(10.0, 90.0))
     scaled = scaler.fit_transform(array)
     return scaled, scaler
 

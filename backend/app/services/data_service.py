@@ -4,9 +4,9 @@ import re
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
-from app.models.db_models import Anomaly, SensorData
+from app.models.db_models import Anomaly, SensorData, TrainingHistory
 
 
 def infer_sensor_type(filename: str) -> str:
@@ -60,7 +60,12 @@ def load_csv_to_db(
         db.query(SensorData).filter(SensorData.id.in_(existing_ids)).delete(
             synchronize_session=False
         )
-        db.commit()
+    _delete_stale_training_history(
+        db,
+        sensor_type=sensor_type,
+        source_file=source_name,
+        include_global=True,
+    )
 
     rows = [
         SensorData(
@@ -74,6 +79,34 @@ def load_csv_to_db(
     db.bulk_save_objects(rows)
     db.commit()
     return len(rows)
+
+
+def _delete_stale_training_history(
+    db: Session,
+    *,
+    sensor_type: str,
+    source_file: str | None = None,
+    include_global: bool = False,
+) -> int:
+    query = db.query(TrainingHistory).filter(TrainingHistory.sensor_type == sensor_type)
+    if source_file is not None:
+        source_filters = [TrainingHistory.source_file == source_file]
+        if include_global:
+            source_filters.append(TrainingHistory.source_file.is_(None))
+        query = query.filter(or_(*source_filters))
+
+    stale_ids = [row_id for (row_id,) in query.with_entities(TrainingHistory.id).all()]
+    if not stale_ids:
+        return 0
+
+    db.query(Anomaly).filter(Anomaly.training_history_id.in_(stale_ids)).delete(
+        synchronize_session=False
+    )
+    return (
+        db.query(TrainingHistory)
+        .filter(TrainingHistory.id.in_(stale_ids))
+        .delete(synchronize_session=False)
+    )
 
 
 def get_sensor_data(
@@ -114,23 +147,35 @@ def get_data_stats(
     sensor_type: str | None = None,
     source_file: str | None = None,
 ) -> dict[str, float | int | None]:
-    query = db.query(SensorData.value)
+    query = db.query(
+        func.count(SensorData.value),
+        func.avg(SensorData.value),
+        func.min(SensorData.value),
+        func.max(SensorData.value),
+    )
     if sensor_type:
         query = query.filter(SensorData.sensor_type == sensor_type)
     if source_file:
         query = query.filter(SensorData.source_file == source_file)
 
-    values = [value for (value,) in query.all()]
-    if not values:
+    count, mean, min_val, max_val = query.one()
+    if not count:
         return {"count": 0, "mean": None, "min": None, "max": None, "std": None}
 
-    series = pd.Series(values, dtype=float)
+    # SQLite has no built-in stddev, compute via variance formula
+    var_query = db.query(func.avg((SensorData.value - mean) * (SensorData.value - mean)))
+    if sensor_type:
+        var_query = var_query.filter(SensorData.sensor_type == sensor_type)
+    if source_file:
+        var_query = var_query.filter(SensorData.source_file == source_file)
+    variance = var_query.scalar() or 0.0
+
     return {
-        "count": int(series.count()),
-        "mean": float(series.mean()),
-        "min": float(series.min()),
-        "max": float(series.max()),
-        "std": float(series.std(ddof=0)),
+        "count": int(count),
+        "mean": float(mean),
+        "min": float(min_val),
+        "max": float(max_val),
+        "std": float(variance ** 0.5),
     }
 
 
@@ -180,19 +225,21 @@ def delete_sensor_data(db: Session, sensor_type: str) -> int:
         .filter(SensorData.id.in_(sensor_ids))
         .delete(synchronize_session=False)
     )
+    _delete_stale_training_history(db, sensor_type=sensor_type)
     db.commit()
     return deleted
 
 
-def delete_source_data(db: Session, source_file: str) -> int:
-    sensor_ids = [
-        row_id
-        for (row_id,) in db.query(SensorData.id)
-        .filter(SensorData.source_file == source_file)
-        .all()
-    ]
+def delete_source_data(db: Session, source_file: str, sensor_type: str | None = None) -> int:
+    query = db.query(SensorData).filter(SensorData.source_file == source_file)
+    if sensor_type:
+        query = query.filter(SensorData.sensor_type == sensor_type)
+
+    rows = query.with_entities(SensorData.id, SensorData.sensor_type).all()
+    sensor_ids = [row_id for row_id, _sensor_type in rows]
     if not sensor_ids:
         return 0
+    affected_sensor_types = sorted({_sensor_type for _row_id, _sensor_type in rows})
 
     db.query(Anomaly).filter(Anomaly.sensor_data_id.in_(sensor_ids)).delete(
         synchronize_session=False
@@ -202,5 +249,12 @@ def delete_source_data(db: Session, source_file: str) -> int:
         .filter(SensorData.id.in_(sensor_ids))
         .delete(synchronize_session=False)
     )
+    for affected_sensor_type in affected_sensor_types:
+        _delete_stale_training_history(
+            db,
+            sensor_type=affected_sensor_type,
+            source_file=source_file,
+            include_global=True,
+        )
     db.commit()
     return deleted

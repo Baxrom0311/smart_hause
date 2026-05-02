@@ -188,7 +188,7 @@ def export_data(
     if source_file:
         query = query.filter(SensorData.source_file == source_file)
 
-    rows = query.order_by(SensorData.timestamp).all()
+    rows = query.order_by(SensorData.timestamp).yield_per(1000)
     filename = _safe_export_name("sensor_data", sensor_type, source_file)
     return StreamingResponse(
         _iter_sensor_csv(rows),
@@ -219,8 +219,12 @@ def delete_sensor(sensor_type: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/source/{source_file:path}")
-def delete_source(source_file: str, db: Session = Depends(get_db)):
-    deleted_rows = delete_source_data(db, Path(source_file).name)
+def delete_source(
+    source_file: str,
+    sensor_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    deleted_rows = delete_source_data(db, Path(source_file).name, sensor_type=sensor_type)
     if deleted_rows == 0:
         raise HTTPException(status_code=404, detail="Dataset bo'yicha ma'lumot topilmadi.")
     return {"message": "Dataset ma'lumotlari o'chirildi.", "deleted_rows": deleted_rows}

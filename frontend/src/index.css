@@ -1,0 +1,176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 97%;
+    --foreground: 222 28% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 24% 14%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 24% 14%;
+
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 221 100% 96%;
+
+    --secondary: 187 68% 94%;
+    --secondary-foreground: 190 70% 22%;
+
+    --muted: 220 16% 93%;
+    --muted-foreground: 222 10% 40%;
+
+    --accent: 154 54% 93%;
+    --accent-foreground: 158 64% 24%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --destructive-soft: 0 86% 97%;
+
+    --border: 220 14% 88%;
+    --input: 220 14% 88%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+
+    --teal: 188 72% 34%;
+    --teal-foreground: 0 0% 100%;
+    --sage: 158 64% 34%;
+    --sage-foreground: 0 0% 100%;
+    --amber: 38 92% 50%;
+    --amber-foreground: 222 24% 14%;
+    --clay: 221 83% 53%;
+
+    --chart-value: 188 72% 34%;
+    --chart-recon: 38 92% 48%;
+    --chart-error: 221 83% 53%;
+    --chart-threshold: 222 12% 42%;
+    --chart-anomaly: 0 72% 51%;
+
+    --shadow-sm: 0 1px 2px 0 hsl(222 24% 14% / 0.04);
+    --shadow-card: 0 1px 2px 0 hsl(222 24% 14% / 0.05);
+    --shadow-lg: 0 8px 24px -16px hsl(222 24% 14% / 0.24);
+
+    --gradient-clay: linear-gradient(135deg, hsl(221 83% 53%) 0%, hsl(188 72% 34%) 100%);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 222 24% 14%;
+    --sidebar-primary: 221 83% 53%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 221 100% 96%;
+    --sidebar-accent-foreground: 221 83% 38%;
+    --sidebar-border: 220 14% 88%;
+    --sidebar-ring: 221 83% 53%;
+  }
+
+  .dark {
+    --background: 222 24% 10%;
+    --foreground: 38 30% 94%;
+    --card: 222 22% 13%;
+    --card-foreground: 38 30% 94%;
+    --popover: 222 22% 13%;
+    --popover-foreground: 38 30% 94%;
+    --primary: 14 64% 56%;
+    --primary-foreground: 40 50% 98%;
+    --primary-soft: 14 30% 22%;
+    --secondary: 192 22% 18%;
+    --secondary-foreground: 188 50% 88%;
+    --muted: 222 18% 18%;
+    --muted-foreground: 38 14% 68%;
+    --accent: 152 18% 18%;
+    --accent-foreground: 142 30% 84%;
+    --destructive: 4 64% 56%;
+    --destructive-foreground: 40 50% 98%;
+    --destructive-soft: 4 30% 20%;
+    --border: 222 14% 22%;
+    --input: 222 14% 22%;
+    --ring: 14 64% 56%;
+    --sidebar-background: 222 22% 12%;
+    --sidebar-foreground: 38 24% 88%;
+    --sidebar-primary: 14 64% 56%;
+    --sidebar-primary-foreground: 40 50% 98%;
+    --sidebar-accent: 222 18% 18%;
+    --sidebar-accent-foreground: 14 64% 70%;
+    --sidebar-border: 222 14% 22%;
+    --sidebar-ring: 14 64% 56%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
+    font-family: "Space Grotesk", "IBM Plex Sans", ui-sans-serif, sans-serif;
+    letter-spacing: 0;
+  }
+  .font-mono {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+}
+
+@layer utilities {
+  .surface-card {
+    @apply bg-card border border-border rounded-lg;
+    box-shadow: var(--shadow-card);
+  }
+  .surface-hover {
+    transition: box-shadow 160ms ease, border-color 160ms ease;
+  }
+  .surface-hover:hover {
+    box-shadow: var(--shadow-lg);
+    border-color: hsl(var(--primary) / 0.22);
+  }
+  .gradient-clay {
+    background: var(--gradient-clay);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .page-fade {
+    animation: pageFade 360ms ease-out;
+  }
+  @keyframes pageFade {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .pulse-soft {
+    animation: pulseSoft 2.4s ease-in-out infinite;
+  }
+  @keyframes pulseSoft {
+    0%,
+    100% {
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+}

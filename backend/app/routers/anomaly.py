@@ -26,6 +26,12 @@ def _safe_export_name(prefix: str, sensor_type: str | None, source_file: str | N
     return f"{prefix}_{label}.csv"
 
 
+def _severity_score(anomaly_score: float, threshold: float) -> float:
+    if threshold <= 0:
+        return 0.0
+    return float(anomaly_score / threshold)
+
+
 def _iter_anomaly_csv(rows):
     buffer = StringIO()
     writer = csv.writer(buffer)
@@ -38,6 +44,7 @@ def _iter_anomaly_csv(rows):
             "value",
             "reconstructed_value",
             "anomaly_score",
+            "severity_score",
             "threshold",
             "is_anomaly",
             "sensor_type",
@@ -59,6 +66,7 @@ def _iter_anomaly_csv(rows):
                 sensor.value,
                 anomaly.reconstructed_value if anomaly.reconstructed_value is not None else "",
                 anomaly.anomaly_score,
+                _severity_score(anomaly.anomaly_score, anomaly.threshold),
                 anomaly.threshold,
                 int(bool(anomaly.is_anomaly)),
                 sensor.sensor_type,
@@ -76,9 +84,21 @@ def detect(request: AnomalyDetectionRequest, db: Session = Depends(get_db)):
     training_query = db.query(TrainingHistory).filter(TrainingHistory.sensor_type == request.sensor_type)
     if request.training_id is not None:
         training_query = training_query.filter(TrainingHistory.id == request.training_id)
+        training = training_query.order_by(TrainingHistory.created_at.desc()).first()
     elif request.source_file:
-        training_query = training_query.filter(TrainingHistory.source_file == request.source_file)
-    training = training_query.order_by(TrainingHistory.created_at.desc()).first()
+        training = (
+            training_query.filter(TrainingHistory.source_file == request.source_file)
+            .order_by(TrainingHistory.created_at.desc())
+            .first()
+        )
+        if not training:
+            training = (
+                training_query.filter(TrainingHistory.source_file.is_(None))
+                .order_by(TrainingHistory.created_at.desc())
+                .first()
+            )
+    else:
+        training = training_query.order_by(TrainingHistory.created_at.desc()).first()
     if not training:
         raise HTTPException(status_code=404, detail="Mos trening topilmadi.")
     if request.source_file and training.source_file and training.source_file != request.source_file:
@@ -88,7 +108,12 @@ def detect(request: AnomalyDetectionRequest, db: Session = Depends(get_db)):
         )
 
     try:
-        result = run_anomaly_detection(db, request.sensor_type, training)
+        result = run_anomaly_detection(
+            db,
+            request.sensor_type,
+            training,
+            source_file=request.source_file,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -131,6 +156,7 @@ def results(
             sensor_data_id=anomaly.sensor_data_id,
             training_history_id=anomaly.training_history_id,
             anomaly_score=anomaly.anomaly_score,
+            severity_score=_severity_score(anomaly.anomaly_score, anomaly.threshold),
             reconstructed_value=anomaly.reconstructed_value,
             is_anomaly=anomaly.is_anomaly,
             threshold=anomaly.threshold,
@@ -162,6 +188,7 @@ def result_detail(anomaly_id: int, db: Session = Depends(get_db)):
         sensor_data_id=anomaly.sensor_data_id,
         training_history_id=anomaly.training_history_id,
         anomaly_score=anomaly.anomaly_score,
+        severity_score=_severity_score(anomaly.anomaly_score, anomaly.threshold),
         reconstructed_value=anomaly.reconstructed_value,
         is_anomaly=anomaly.is_anomaly,
         threshold=anomaly.threshold,
@@ -188,7 +215,7 @@ def export_results(
     if anomaly_only:
         query = query.filter(Anomaly.is_anomaly.is_(True))
 
-    rows = query.order_by(SensorData.timestamp).all()
+    rows = query.order_by(SensorData.timestamp).yield_per(1000)
     filename = _safe_export_name("anomaly_results", sensor_type, source_file)
     return StreamingResponse(
         _iter_anomaly_csv(rows),
@@ -202,15 +229,15 @@ def stats(db: Session = Depends(get_db)):
     total_records = db.query(Anomaly).count()
     total_anomalies = db.query(Anomaly).filter(Anomaly.is_anomaly.is_(True)).count()
 
+    from sqlalchemy import func as sa_func
     rows = (
-        db.query(SensorData.sensor_type, Anomaly.id)
+        db.query(SensorData.sensor_type, sa_func.count(Anomaly.id))
         .join(Anomaly, Anomaly.sensor_data_id == SensorData.id)
         .filter(Anomaly.is_anomaly.is_(True))
+        .group_by(SensorData.sensor_type)
         .all()
     )
-    by_sensor: dict[str, int] = {}
-    for sensor_type, _anomaly_id in rows:
-        by_sensor[sensor_type] = by_sensor.get(sensor_type, 0) + 1
+    by_sensor: dict[str, int] = {st: cnt for st, cnt in rows}
 
     anomaly_rate = (total_anomalies / total_records * 100) if total_records else 0.0
     return AnomalyStats(

@@ -151,6 +151,7 @@ class AnomalyResponse(BaseModel):
     sensor_data_id: int
     training_history_id: int | None
     anomaly_score: float
+    severity_score: float
     reconstructed_value: float | None
     is_anomaly: bool
     threshold: float

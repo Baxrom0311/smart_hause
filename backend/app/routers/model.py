@@ -1,10 +1,14 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
+import logging
 import threading
+
+logger = logging.getLogger(__name__)
 
 import joblib
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import ANOMALY_THRESHOLD_K, SAVED_MODELS_DIR
@@ -12,7 +16,7 @@ from app.database import SessionLocal, get_db
 from app.ml.predict import calculate_reconstruction_error, determine_threshold
 from app.ml.preprocessing import create_sequences, normalize_data, train_test_split
 from app.ml.train import train_model
-from app.models.db_models import TrainingHistory
+from app.models.db_models import SensorData, TrainingHistory
 from app.models.schemas import ModelStatusResponse, TrainingRequest, TrainingResponse
 from app.services.autoencoder import build_autoencoder
 from app.services.data_service import get_sensor_series
@@ -88,6 +92,31 @@ def _status_snapshot() -> dict[str, str | int | datetime | float | None]:
         return dict(TRAINING_STATUS)
 
 
+def _try_start_training(request: TrainingRequest, started_at: datetime) -> bool:
+    with TRAINING_LOCK:
+        if TRAINING_STATUS["state"] == "running":
+            return False
+        TRAINING_STATUS.update(
+            {
+                "state": "running",
+                "sensor_type": request.sensor_type,
+                "source_file": request.source_file,
+                "message": "Trening navbatga qo'yildi.",
+                "started_at": started_at,
+                "finished_at": None,
+                "training_id": None,
+                "progress": 1,
+                "current_epoch": 0,
+                "total_epochs": request.epochs,
+                "train_loss": None,
+                "val_loss": None,
+                "loss_history": [],
+                "val_loss_history": [],
+            }
+        )
+    return True
+
+
 def _progress_callback(sensor_type: str, source_file: str | None):
     def callback(current_epoch: int, total_epochs: int, logs: dict[str, float]) -> None:
         progress = min(95, max(5, int(current_epoch / max(total_epochs, 1) * 100)))
@@ -122,7 +151,10 @@ def _progress_callback(sensor_type: str, source_file: str | None):
 def _run_training_job(request_data: dict[str, int | float | str], started_at: datetime) -> None:
     db = SessionLocal()
     request = TrainingRequest.model_validate(request_data)
+    logger.info("Trening boshlandi: sensor_type=%s, source_file=%s, epochs=%d",
+                request.sensor_type, request.source_file, request.epochs)
     try:
+        np.random.seed(42)
         sensor_rows = get_sensor_series(db, request.sensor_type, request.source_file)
         if not sensor_rows:
             raise ValueError("Trening uchun sensor ma'lumotlari topilmadi.")
@@ -138,7 +170,7 @@ def _run_training_job(request_data: dict[str, int | float | str], started_at: da
         x_train, x_test = train_test_split(sequences)
         unique_source_files = sorted({row.source_file for row in sensor_rows})
         training_source_file = unique_source_files[0] if len(unique_source_files) == 1 else None
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         safe_sensor_type = request.sensor_type.replace(" ", "_").lower()
         model_path = SAVED_MODELS_DIR / f"autoencoder_{safe_sensor_type}_{timestamp}.keras"
         scaler_path = SAVED_MODELS_DIR / f"scaler_{safe_sensor_type}_{timestamp}.joblib"
@@ -195,26 +227,30 @@ def _run_training_job(request_data: dict[str, int | float | str], started_at: da
         db.add(training)
         db.commit()
         db.refresh(training)
+        logger.info("Trening muvaffaqiyatli yakunlandi: id=%d, f1=%.4f, threshold=%.6f",
+                     training.id, training.f1 or 0, training.threshold)
     except RuntimeError as exc:
+        logger.error("Trening runtime xatosi: %s", exc)
         _update_status(
             state="failed",
             sensor_type=request.sensor_type,
             source_file=request.source_file,
             message=str(exc),
             started_at=started_at,
-            finished_at=datetime.utcnow(),
+            finished_at=datetime.now(timezone.utc),
             training_id=None,
             progress=100,
         )
         return
     except Exception as exc:
+        logger.exception("Trening xatosi: %s", exc)
         _update_status(
             state="failed",
             sensor_type=request.sensor_type,
             source_file=request.source_file,
             message=f"Trening xatosi: {exc}",
             started_at=started_at,
-            finished_at=datetime.utcnow(),
+            finished_at=datetime.now(timezone.utc),
             training_id=None,
             progress=100,
         )
@@ -228,7 +264,7 @@ def _run_training_job(request_data: dict[str, int | float | str], started_at: da
         source_file=training.source_file,
         message="Model muvaffaqiyatli o'qitildi.",
         started_at=started_at,
-        finished_at=datetime.utcnow(),
+        finished_at=datetime.now(timezone.utc),
         training_id=training.id,
         progress=100,
         current_epoch=request.epochs,
@@ -246,42 +282,28 @@ def _run_training_job(request_data: dict[str, int | float | str], started_at: da
     status_code=status.HTTP_202_ACCEPTED,
 )
 def train(request: TrainingRequest, db: Session = Depends(get_db)):
-    if TRAINING_STATUS["state"] == "running":
-        raise HTTPException(
-            status_code=409,
-            detail="Hozir boshqa trening ishlayapti. Tugashini kuting.",
-        )
+    row_count = (
+        db.query(func.count(SensorData.id))
+        .filter(SensorData.sensor_type == request.sensor_type)
+    )
+    if request.source_file:
+        row_count = row_count.filter(SensorData.source_file == request.source_file)
+    total = row_count.scalar() or 0
 
-    sensor_rows = get_sensor_series(db, request.sensor_type, request.source_file)
-    if not sensor_rows:
+    if total == 0:
         raise HTTPException(status_code=404, detail="Trening uchun sensor ma'lumotlari topilmadi.")
-
-    values = np.asarray([row.value for row in sensor_rows], dtype=float)
-    scaled_values, _scaler = normalize_data(values)
-    sequences = create_sequences(scaled_values, window_size=request.window_size)
-    if len(sequences) < 2:
+    if total < request.window_size + 2:
         raise HTTPException(
             status_code=400,
             detail="Window yaratish uchun ma'lumot yetarli emas. window_size ni kamaytiring yoki ko'proq data yuklang.",
         )
 
-    started_at = datetime.utcnow()
-    _update_status(
-        state="running",
-        sensor_type=request.sensor_type,
-        source_file=request.source_file,
-        message="Trening navbatga qo'yildi.",
-        started_at=started_at,
-        finished_at=None,
-        training_id=None,
-        progress=1,
-        current_epoch=0,
-        total_epochs=request.epochs,
-        train_loss=None,
-        val_loss=None,
-        loss_history=[],
-        val_loss_history=[],
-    )
+    started_at = datetime.now(timezone.utc)
+    if not _try_start_training(request, started_at):
+        raise HTTPException(
+            status_code=409,
+            detail="Hozir boshqa trening ishlayapti. Tugashini kuting.",
+        )
     thread = threading.Thread(
         target=_run_training_job,
         args=(request.model_dump(), started_at),

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
@@ -14,7 +14,7 @@ class SensorData(Base):
     value = Column(Float, nullable=False)
     sensor_type = Column(String, nullable=False, index=True)
     source_file = Column(String, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     anomalies = relationship(
         "Anomaly",
@@ -46,7 +46,7 @@ class TrainingHistory(Base):
     f1 = Column(Float, nullable=True)
     model_path = Column(String, nullable=True)
     scaler_path = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     anomalies = relationship("Anomaly", back_populates="training_history")
 
@@ -71,7 +71,7 @@ class Anomaly(Base):
     reconstructed_value = Column(Float, nullable=True)
     is_anomaly = Column(Boolean, default=False, nullable=False, index=True)
     threshold = Column(Float, nullable=False)
-    detected_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    detected_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
 
     sensor_data = relationship("SensorData", back_populates="anomalies")
     training_history = relationship("TrainingHistory", back_populates="anomalies")

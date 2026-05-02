@@ -24,8 +24,10 @@ def run_anomaly_detection(
     db: Session,
     sensor_type: str,
     training: TrainingHistory,
-) -> dict[str, int | float]:
-    sensor_rows = get_sensor_series(db, sensor_type, training.source_file)
+    source_file: str | None = None,
+) -> dict[str, int | float | str | None]:
+    target_source_file = source_file if source_file is not None else training.source_file
+    sensor_rows = get_sensor_series(db, sensor_type, target_source_file)
     if not sensor_rows:
         raise ValueError(f"`{sensor_type}` uchun ma'lumot topilmadi.")
     if not training.model_path or not training.scaler_path:
@@ -80,7 +82,7 @@ def run_anomaly_detection(
     detected = int(sum(bool(flag) for flag in flags))
     return {
         "training_id": training.id,
-        "source_file": training.source_file,
+        "source_file": target_source_file,
         "threshold": float(training.threshold),
         "total_windows": len(anomaly_rows),
         "anomalies_detected": detected,

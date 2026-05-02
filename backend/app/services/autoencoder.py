@@ -2,9 +2,10 @@ def build_autoencoder(
     window_size: int,
     n_features: int = 1,
     learning_rate: float = 0.001,
-):
+    ):
     try:
-        from tensorflow.keras.layers import Dense, Input, LSTM, RepeatVector, TimeDistributed
+        import tensorflow as tf
+        from tensorflow.keras.layers import Dense, Dropout, Input, LSTM, RepeatVector, TimeDistributed
         from tensorflow.keras.models import Model
         from tensorflow.keras.optimizers import Adam
     except ImportError as exc:
@@ -12,13 +13,16 @@ def build_autoencoder(
             "TensorFlow o'rnatilmagan. `pip install -r requirements.txt` ni ishga tushiring."
         ) from exc
 
+    tf.random.set_seed(42)
     inputs = Input(shape=(window_size, n_features))
-    encoded = LSTM(64, activation="relu", return_sequences=True)(inputs)
-    encoded = LSTM(32, activation="relu", return_sequences=False)(encoded)
+    encoded = LSTM(48, activation="tanh", return_sequences=True)(inputs)
+    encoded = Dropout(0.1)(encoded)
+    encoded = LSTM(24, activation="tanh", return_sequences=False)(encoded)
 
     decoded = RepeatVector(window_size)(encoded)
-    decoded = LSTM(32, activation="relu", return_sequences=True)(decoded)
-    decoded = LSTM(64, activation="relu", return_sequences=True)(decoded)
+    decoded = LSTM(24, activation="tanh", return_sequences=True)(decoded)
+    decoded = Dropout(0.1)(decoded)
+    decoded = LSTM(48, activation="tanh", return_sequences=True)(decoded)
     decoded = TimeDistributed(Dense(n_features))(decoded)
 
     model = Model(inputs, decoded)

@@ -120,7 +120,9 @@ def main() -> int:
             params={"sensor_type": "temperature", "source_file": source_file, "limit": 20},
         )
         assert results.status_code == 200, results.text
-        assert results.json()["total"] == detection_data["total_windows"], results.text
+        results_data = results.json()
+        assert results_data["total"] == detection_data["total_windows"], results.text
+        assert "severity_score" in results_data["items"][0], results.text
 
         dashboard = client.get("/api/dashboard/summary")
         assert dashboard.status_code == 200, dashboard.text
@@ -135,6 +137,7 @@ def main() -> int:
         anomaly_export = client.get("/api/anomaly/export", params={"source_file": source_file})
         assert anomaly_export.status_code == 200, anomaly_export.text
         assert anomaly_export.text.splitlines()[0].startswith("id,sensor_data_id")
+        assert "severity_score" in anomaly_export.text.splitlines()[0]
 
         print("health=ok")
         print(f"uploaded_rows={upload_data['rows_inserted']}")
